@@ -19,6 +19,7 @@ use toml::Value;
 pub struct Config {
     // A map from library name to file name
     libraries: FnvHashMap<String, LibraryConfig>,
+    ignored_libs: Vec<String>,
 }
 
 #[derive(Clone, PartialEq, Eq, Default, Debug)]
@@ -165,7 +166,27 @@ impl Config {
             );
         }
 
-        Ok(Config { libraries })
+        let mut ignored_libs: Vec<String> = vec![];
+        if let Some(ignored_libs_cfg) = config.get("ignore") {
+            let ignored_libs_name = ignored_libs_cfg
+                .as_table()
+                .ok_or("ignore must be a table")?
+                .get("libraries")
+                .ok_or("If [ignore] is present, then we need to configure libraries")?
+                .as_array()
+                .ok_or("libraries for ignored libraries is not an array")?;
+            for name in ignored_libs_name {
+                let lib_name = name
+                    .as_str()
+                    .ok_or_else(|| format!("{name} must be a string"))?;
+                ignored_libs.push(lib_name.to_string());
+            }
+        }
+
+        Ok(Config {
+            libraries,
+            ignored_libs,
+        })
     }
 
     pub fn read_file_path(file_name: &Path) -> io::Result<Config> {
@@ -345,16 +366,16 @@ mod tests {
         let config = Config::from_str(
             &format!(
                 "
-[libraries]
-lib2.files = [
-  'pkg2.vhd',
-  '{}'
-]
-lib1.files = [
-  'pkg1.vhd',
-  'tb_ent.vhd'
-]
-",
+                [libraries]
+                lib2.files = [
+                'pkg2.vhd',
+                '{}'
+                ]
+                lib1.files = [
+                'pkg1.vhd',
+                'tb_ent.vhd'
+                ]
+                ",
                 absolute_vhd.to_str().unwrap()
             ),
             parent,
@@ -363,6 +384,7 @@ lib1.files = [
         let mut libraries: Vec<&str> = config.iter_libraries().map(|lib| lib.name()).collect();
         libraries.sort_unstable();
         assert_eq!(libraries, &["lib1", "lib2"]);
+        assert!(config.ignored_libs.is_empty());
 
         let lib1 = config.get_library("lib1").unwrap();
         let lib2 = config.get_library("lib2").unwrap();
@@ -378,18 +400,49 @@ lib1.files = [
     }
 
     #[test]
+    fn config_from_str_with_ignore_libs() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let parent = tempdir.path();
+
+        let tempdir2 = tempfile::tempdir().unwrap();
+        let absolute_path = abspath(tempdir2.path());
+        let absolute_vhd = touch(&absolute_path, "absolute.vhd");
+        let config = Config::from_str(
+            &format!(
+                "
+                [libraries]
+                lib2.files = [
+                'pkg2.vhd',
+                '{}'
+                ]
+                lib1.files = [
+                'pkg1.vhd',
+                'tb_ent.vhd'
+                ]
+                [ignore]
+                libraries = [ 'unisim', 'xpm' ]
+                ",
+                absolute_vhd.to_str().unwrap()
+            ),
+            parent,
+        )
+        .unwrap();
+        assert_eq!(config.ignored_libs, vec!["unisim", "xpm"]);
+    }
+
+    #[test]
     fn test_append_config() {
         let parent0 = Path::new("parent_folder0");
         let config0 = Config::from_str(
             "
-[libraries]
-lib1.files = [
-  'pkg1.vhd',
-]
-lib2.files = [
-  'pkg2.vhd'
-]
-",
+                [libraries]
+                lib1.files = [
+                'pkg1.vhd',
+                ]
+                lib2.files = [
+                'pkg2.vhd'
+                ]
+                ",
             parent0,
         )
         .unwrap();
@@ -397,14 +450,14 @@ lib2.files = [
         let parent1 = Path::new("parent_folder1");
         let config1 = Config::from_str(
             "
-[libraries]
-lib2.files = [
-  'ent.vhd'
-]
-lib3.files = [
-  'pkg3.vhd',
-]
-",
+                [libraries]
+                lib2.files = [
+                'ent.vhd'
+                ]
+                lib3.files = [
+                'pkg3.vhd',
+                ]
+                ",
             parent1,
         )
         .unwrap();
@@ -413,17 +466,17 @@ lib3.files = [
         let expected_config = Config::from_str(
             &format!(
                 "
-[libraries]
-lib1.files = [
-  '{pkg1}',
-]
-lib2.files = [
-  '{ent}'
-]
-lib3.files = [
-  '{pkg3}',
-]
-",
+                    [libraries]
+                    lib1.files = [
+                    '{pkg1}',
+                    ]
+                    lib2.files = [
+                    '{ent}'
+                    ]
+                    lib3.files = [
+                    '{pkg3}',
+                    ]
+                    ",
                 pkg1 = parent0.join("pkg1.vhd").to_str().unwrap(),
                 ent = parent1.join("ent.vhd").to_str().unwrap(),
                 pkg3 = parent1.join("pkg3.vhd").to_str().unwrap()
@@ -442,11 +495,11 @@ lib3.files = [
         let parent = Path::new("parent_folder");
         let config = Config::from_str(
             "
-[libraries]
-lib.files = [
-  'missing.vhd'
-]
-",
+                [libraries]
+                lib.files = [
+                'missing.vhd'
+                ]
+                ",
             parent,
         )
         .unwrap();
@@ -469,11 +522,11 @@ lib.files = [
         let parent = tempdir.path();
         let config = Config::from_str(
             "
-[libraries]
-lib.files = [
-  '*.vhd'
-]
-",
+                [libraries]
+                lib.files = [
+                '*.vhd'
+                ]
+                ",
             parent,
         )
         .unwrap();
@@ -493,12 +546,12 @@ lib.files = [
         let parent = tempdir.path();
         let config = Config::from_str(
             "
-[libraries]
-lib.files = [
-  '*.vhd',
-  'file*.vhd'
-]
-",
+                [libraries]
+                lib.files = [
+                '*.vhd',
+                'file*.vhd'
+                ]
+                ",
             parent,
         )
         .unwrap();
@@ -516,11 +569,11 @@ lib.files = [
         let parent = Path::new("parent_folder");
         let config = Config::from_str(
             "
-[libraries]
-lib.files = [
-  'missing*.vhd'
-]
-",
+                [libraries]
+                lib.files = [
+                'missing*.vhd'
+                ]
+                ",
             parent,
         )
         .unwrap();
