@@ -207,6 +207,10 @@ impl Config {
         self.libraries.values()
     }
 
+    pub fn get_ignored_library(&self) -> &Vec<String> {
+        &self.ignored_libs
+    }
+
     /// Append another config to self
     ///
     /// In case of conflict the appended config takes precedence
@@ -229,6 +233,10 @@ impl Config {
                 );
             }
         }
+
+        self.ignored_libs.extend(config.ignored_libs.clone());
+        self.ignored_libs.sort();
+        self.ignored_libs.dedup();
     }
 
     /// Load configuration file from installation folder
@@ -442,6 +450,8 @@ mod tests {
                 lib2.files = [
                 'pkg2.vhd'
                 ]
+                [ignore]
+                libraries = ['lib_a', 'lib_b']
                 ",
             parent0,
         )
@@ -457,6 +467,8 @@ mod tests {
                 lib3.files = [
                 'pkg3.vhd',
                 ]
+                [ignore]
+                libraries = ['lib_c', 'lib_d']
                 ",
             parent1,
         )
@@ -476,6 +488,74 @@ mod tests {
                     lib3.files = [
                     '{pkg3}',
                     ]
+                    [ignore]
+                    libraries = ['lib_a', 'lib_b', 'lib_c', 'lib_d']
+                    ",
+                pkg1 = parent0.join("pkg1.vhd").to_str().unwrap(),
+                ent = parent1.join("ent.vhd").to_str().unwrap(),
+                pkg3 = parent1.join("pkg3.vhd").to_str().unwrap()
+            ),
+            expected_parent,
+        )
+        .unwrap();
+
+        let mut merged_config = config0;
+        merged_config.append(&config1, &mut Vec::new());
+        assert_eq!(merged_config, expected_config);
+    }
+
+    #[test]
+    fn test_append_ignores_duplicates() {
+        let parent0 = Path::new("parent_folder0");
+        let config0 = Config::from_str(
+            "
+                [libraries]
+                lib1.files = [
+                'pkg1.vhd',
+                ]
+                lib2.files = [
+                'pkg2.vhd'
+                ]
+                [ignore]
+                libraries = ['lib_a', 'lib_b']
+                ",
+            parent0,
+        )
+        .unwrap();
+
+        let parent1 = Path::new("parent_folder1");
+        let config1 = Config::from_str(
+            "
+                [libraries]
+                lib2.files = [
+                'ent.vhd'
+                ]
+                lib3.files = [
+                'pkg3.vhd',
+                ]
+                [ignore]
+                libraries = ['lib_c', 'lib_a']
+                ",
+            parent1,
+        )
+        .unwrap();
+
+        let expected_parent = Path::new("");
+        let expected_config = Config::from_str(
+            &format!(
+                "
+                    [libraries]
+                    lib1.files = [
+                    '{pkg1}',
+                    ]
+                    lib2.files = [
+                    '{ent}'
+                    ]
+                    lib3.files = [
+                    '{pkg3}',
+                    ]
+                    [ignore]
+                    libraries = ['lib_a', 'lib_b', 'lib_c']
                     ",
                 pkg1 = parent0.join("pkg1.vhd").to_str().unwrap(),
                 ent = parent1.join("ent.vhd").to_str().unwrap(),
